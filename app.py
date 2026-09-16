@@ -45,6 +45,74 @@ from pydantic import BaseModel
 BASE = "https://juicewrldapi.com/juicewrld"
 
 # ---------------------------------------------------------------------------
+# Console diagnostics — friendly colored status lines for startup + queue
+# activity, so the terminal running the server shows what's happening
+# without needing the browser UI open.
+# ---------------------------------------------------------------------------
+class _C:
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
+    CYAN = "\033[36m"
+
+
+def _enable_windows_vt() -> bool:
+    """cmd.exe only interprets \\033[ ANSI codes once ENABLE_VIRTUAL_TERMINAL_
+    PROCESSING is turned on for the console handle — without it we'd print
+    literal escape-code garbage instead of colored text."""
+    if sys.platform != "win32":
+        return True
+    try:
+        kernel32 = ctypes.windll.kernel32
+        STD_OUTPUT_HANDLE = -11
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        handle = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return bool(kernel32.SetConsoleMode(handle, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING))
+    except Exception:
+        return False
+
+
+_CONSOLE_COLOR = sys.stdout.isatty() and _enable_windows_vt()
+
+
+def _paint(text: str, *codes: str) -> str:
+    if not _CONSOLE_COLOR:
+        return text
+    return "".join(codes) + text + _C.RESET
+
+
+_TASK_ICON = {"sync": "⚡", "verify": "🔎", "auto": "🚀", "transcribe": "📝"}
+
+
+def _log_task_event(task: "QueueTask", event: str) -> None:
+    """One friendly console line per queue task lifecycle event."""
+    icon = _TASK_ICON.get(task.type, "•")
+    name = task.song_name or f"song {task.song_id}"
+    if event == "start":
+        print(_paint(f"[queue] {icon} {task.type} \"{name}\" — starting…", _C.CYAN))
+    elif event == "done":
+        dur = (task.finished_at - task.started_at) if task.started_at and task.finished_at else 0
+        line = f"[queue] ✓ \"{name}\" done in {dur:.1f}s"
+        if task.result and "proposed" in task.result:
+            if task.result["proposed"]:
+                line += " — proposal submitted ✓"
+            else:
+                line += f" — propose failed: {task.result.get('propose_error', '')}"
+        print(_paint(line, _C.GREEN if (not task.result or task.result.get("proposed", True)) else _C.YELLOW))
+    elif event == "error":
+        print(_paint(f"[queue] ✗ \"{name}\" failed: {task.error}", _C.RED))
+    elif event == "cancelled":
+        print(_paint(f"[queue] ⊘ \"{name}\" cancelled", _C.YELLOW))
+
+# ---------------------------------------------------------------------------
 # tqdm progress spy — captures stable_whisper alignment/transcription progress
 # ---------------------------------------------------------------------------
 _TQDM_RE = re.compile(
@@ -688,6 +756,7 @@ async def _queue_processor() -> None:
         task.status  = "running"
         task.started_at = time.time()
         await _q_broadcast()
+        _log_task_event(task, "start")
 
         try:
             if task.type == "sync":
@@ -715,10 +784,10 @@ async def _queue_processor() -> None:
         except Exception as exc:
             task.status = "error"
             task.error  = str(exc)
-            print(f"[queue] Task {task.id} failed: {exc}")
         finally:
             task.finished_at = time.time()
             _active_task = None
+            _log_task_event(task, task.status if task.status in ("done", "error", "cancelled") else "error")
             _task_queue.task_done()
             await _q_broadcast()
             # Prune old history (keep last 500 — batch runs can be large)
@@ -732,27 +801,43 @@ async def _queue_processor() -> None:
 # App
 # ---------------------------------------------------------------------------
 def _log_startup_diagnostics() -> None:
-    print(f"[startup] Python: {sys.executable}")
-    print(f"[startup] Device preference: {DEVICE_PREF}")
+    title = _paint(" WRLD Sync ", _C.BOLD, _C.MAGENTA)
+    print(f"\n{title}\n{_paint('─' * 40, _C.DIM)}")
+
+    def row(label: str, value: str, color: str = _C.RESET) -> None:
+        print(f"  {_paint(label.ljust(16), _C.DIM)}{_paint(value, color)}")
+
+    row("Python", sys.executable)
+    row("Align model", ALIGN_MODEL_SIZE)
+    row("Verify model", VERIFY_MODEL_SIZE)
+    row("Device pref", DEVICE_PREF)
+
     try:
         import torch
         cuda_available = torch.cuda.is_available()
-        print(f"[startup] torch {torch.__version__} (CUDA build: {torch.version.cuda or 'none — CPU-only wheel'})")
-        print(f"[startup] torch.cuda.is_available(): {cuda_available}")
+        row("torch", f"{torch.__version__} (CUDA build: {torch.version.cuda or 'none — CPU-only wheel'})")
         if cuda_available:
-            print(f"[startup] GPU: {torch.cuda.get_device_name(0)}")
-            if not _cuda_usable():
-                print("[startup] This GPU's compute capability isn't supported by the installed "
-                      "PyTorch build, so Whisper will run on CPU instead. This usually means the "
-                      "GPU is too old for the CUDA build launch.py installed — no fix available "
-                      "besides using CPU or a newer GPU.")
-        elif DEVICE_PREF == "cuda":
-            print("[startup] Device preference is 'cuda' but CUDA isn't available from this "
-                  "interpreter — Whisper will fall back to CPU. If you expected GPU here, "
-                  "make sure the server was started via start.bat / launch.py so it's using "
-                  "the project's .venv (not some other Python on PATH).")
+            usable = _cuda_usable()
+            row("GPU", torch.cuda.get_device_name(0), _C.GREEN if usable else _C.YELLOW)
+            if not usable:
+                print(_paint(
+                    "  ⚠ This GPU's compute capability isn't supported by the installed PyTorch "
+                    "build, so Whisper will run on CPU instead. This usually means the GPU is too "
+                    "old for the CUDA build launch.py installed — no fix available besides using "
+                    "CPU or a newer GPU.", _C.YELLOW))
+            row("Running on", "GPU" if usable else "CPU", _C.GREEN if usable else _C.CYAN)
+        else:
+            if DEVICE_PREF == "cuda":
+                print(_paint(
+                    "  ⚠ Device preference is 'cuda' but CUDA isn't available from this "
+                    "interpreter — Whisper will fall back to CPU. If you expected GPU here, make "
+                    "sure the server was started via start.bat / launch.py so it's using the "
+                    "project's .venv (not some other Python on PATH).", _C.YELLOW))
+            row("Running on", "CPU", _C.CYAN)
     except Exception as e:
-        print(f"[startup] Could not inspect torch/CUDA: {e}")
+        row("torch/CUDA", f"could not inspect — {e}", _C.RED)
+
+    print(_paint('─' * 40, _C.DIM) + "\n")
 
 
 @asynccontextmanager

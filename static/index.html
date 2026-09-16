@@ -2994,7 +2994,7 @@ async function loadBatchCandidates() {
     const songs = data.songs || [];
     batchSongs = songs
       .filter(s => s.lyrics && !s.synced_lyrics && s.path)
-      .map(s => ({ id: s.id, name: s.track_titles?.[0] ?? s.name ?? `#${s.id}` }));
+      .map(s => ({ id: s.id, name: s.track_titles?.[0] ?? s.name ?? `#${s.id}`, lyrics: s.lyrics }));
     batchState = 'ready';
   } catch (e) {
     batchState = 'error';
@@ -3024,7 +3024,7 @@ function renderBatch() {
       <div>Found <b>${batchSongs.length}</b> song${batchSongs.length === 1 ? '' : 's'} with lyrics but no synced lyrics.</div>
       ${!token ? `<div class="batch-warn">Save an API token in Settings first — each sync submits an editor proposal using it.</div>` : ''}
       <div style="color:var(--muted);font-size:.75rem;line-height:1.5;">
-        Runs one song at a time: fetch → verify against audio → Whisper sync → submit as an editor proposal (reviewed, not a live overwrite). Watch progress in the Task Queue.
+        Runs one song at a time: align each song's existing API lyrics to its audio with Whisper (no transcribing, no Genius) → submit as an editor proposal (reviewed, not a live overwrite). Watch progress in the Task Queue.
       </div>
       <button class="batch-btn" id="batchStartBtn" ${(!token || !batchSongs.length) ? 'disabled' : ''}>
         Start batch (${batchSongs.length})
@@ -3043,7 +3043,7 @@ function renderBatch() {
     const perHour   = elapsedS > 0 ? (doneCount / (elapsedS / 3600)) : 0;
 
     const diagLine = batchDiag
-      ? `<div class="batch-diag">Align: ${esc(batchDiag.align_model)} · Verify: ${esc(batchDiag.verify_model)} · Device: ${esc((batchDiag.device || '?').toUpperCase())}</div>`
+      ? `<div class="batch-diag">Align model: ${esc(batchDiag.align_model)} · Device: ${esc((batchDiag.device || '?').toUpperCase())}</div>`
       : '';
 
     let currentHtml = '';
@@ -3125,10 +3125,10 @@ async function startBatch() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: 'auto',
+          type: 'sync',
           song_id: song.id,
           song_name: song.name,
-          lyrics: '',
+          lyrics: song.lyrics,
           local_path: '',
           auto_propose: true,
           token,
