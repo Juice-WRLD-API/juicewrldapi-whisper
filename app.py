@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field as dc_field
@@ -103,7 +104,30 @@ def _enable_windows_vt() -> bool:
         return False
 
 
+def _disable_console_quick_edit() -> None:
+    """Turn off the console's QuickEdit mode. With it on (the Windows default),
+    clicking anywhere in the window starts a text selection that blocks every
+    write to that console — which freezes whichever thread writes next, including
+    the whisper worker streaming its progress bar. The server then looks hung
+    with the GPU idle until someone presses Esc."""
+    if sys.platform != "win32":
+        return
+    try:
+        kernel32 = ctypes.windll.kernel32
+        STD_INPUT_HANDLE = -10
+        ENABLE_QUICK_EDIT_MODE = 0x0040
+        ENABLE_EXTENDED_FLAGS = 0x0080
+        handle = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel32.SetConsoleMode(
+                handle, (mode.value & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS)
+    except Exception:
+        pass
+
+
 _CONSOLE_COLOR = sys.stdout.isatty() and _enable_windows_vt()
+_disable_console_quick_edit()
 
 
 def _paint(text: str, *codes: str) -> str:
@@ -563,14 +587,36 @@ def _lines_from_alignment(result, lyrics: str) -> list[dict]:
     return lines
 
 
+_STALL_SECONDS = 180   # no alignment progress for this long ⇒ dump the worker's stack
+
+
+def _report_stalled_worker(ident: int | None, label: str, stalled_for: int) -> None:
+    """Print where the whisper thread is actually stuck. Without this a hang is
+    invisible: the tqdm bar sits at its last position, the GPU goes idle, and
+    there is nothing to act on but guesswork."""
+    try:
+        print(_paint(f"[whisper] {label} has made no progress for {stalled_for}s — "
+                     f"worker thread stack:", _C.YELLOW), flush=True)
+        frame = sys._current_frames().get(ident) if ident else None
+        if frame is None:
+            print(_paint("  (worker thread not found)", _C.DIM), flush=True)
+        else:
+            for entry in traceback.format_stack(frame):
+                print(_paint("  " + entry.rstrip().replace("\n", "\n  "), _C.DIM), flush=True)
+    except Exception:
+        pass
+
+
 async def _whisper_sync_worker(task: QueueTask, tmp_path: str, lyrics: str) -> list[dict]:
     """Run align/transcribe in executor. Returns lines."""
     label     = "Aligning" if lyrics else "Transcribing"
     spy       = _ProgressSpy()
     loop      = asyncio.get_running_loop()
     model_obj = await get_align_model()
+    worker_ident: list[int] = []
 
     def _run():
+        worker_ident.append(threading.get_ident())
         orig = sys.stderr
         sys.stderr = _TeeStderr(spy, orig)
         try:
@@ -584,7 +630,10 @@ async def _whisper_sync_worker(task: QueueTask, tmp_path: str, lyrics: str) -> l
     async with _inference_lock:
         fut = loop.run_in_executor(None, _run)
         cancelled = False
-        elapsed = 0
+        started   = time.monotonic()
+        position  = None            # last alignment position tqdm reported
+        moved_at  = started
+        stall_reported = False
         while not fut.done():
             if task.cancel_requested:
                 cancelled = True
@@ -594,6 +643,14 @@ async def _whisper_sync_worker(task: QueueTask, tmp_path: str, lyrics: str) -> l
                 await asyncio.shield(fut)  # wait for thread (lock held — prevents concurrent model use)
                 break
             prog = spy.latest()
+            now  = time.monotonic()
+            elapsed = int(now - started)
+            if prog and prog["done"] != position:
+                position, moved_at, stall_reported = prog["done"], now, False
+            elif not stall_reported and now - moved_at >= _STALL_SECONDS:
+                stall_reported = True
+                _report_stalled_worker(worker_ident[0] if worker_ident else None,
+                                       label, int(now - moved_at))
             if prog:
                 pct = 55 + prog["pct"] * 0.44
                 msg = (f"{label}: {prog['pct']}%  "
@@ -606,7 +663,6 @@ async def _whisper_sync_worker(task: QueueTask, tmp_path: str, lyrics: str) -> l
                              **({"progress": prog} if prog else {})}
             await _q_broadcast()
             await asyncio.sleep(0.5)
-            elapsed += 1
         if not cancelled:
             result = await fut
 
