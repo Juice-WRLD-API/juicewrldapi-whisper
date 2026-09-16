@@ -406,11 +406,21 @@ _q_state_json: str = '{"active":null,"pending":[],"history":[]}'
 
 async def _q_broadcast() -> None:
     global _q_state_json
-    active   = _active_task.to_dict() if _active_task else None
-    pending  = [t.to_dict() for t in _tasks.values() if t.status == "pending"]
-    done_list = [t for t in _tasks.values() if t.status in ("done", "error", "cancelled")]
-    history  = [t.to_dict() for t in sorted(done_list, key=lambda t: t.created_at)][-20:]
-    _q_state_json = json.dumps({"active": active, "pending": pending, "history": history})
+    active      = _active_task.to_dict() if _active_task else None
+    pending_all = [t for t in _tasks.values() if t.status == "pending"]
+    # A large batch run can leave thousands of tasks pending — sending the
+    # full list on every progress tick would mean re-serializing (and the
+    # browser re-rendering) thousands of rows several times a second, so cap
+    # what's actually transmitted and let pending_count carry the true total.
+    pending     = [t.to_dict() for t in pending_all[:50]]
+    done_list   = [t for t in _tasks.values() if t.status in ("done", "error", "cancelled")]
+    history     = [t.to_dict() for t in sorted(done_list, key=lambda t: t.created_at)][-20:]
+    _q_state_json = json.dumps({
+        "active": active,
+        "pending": pending,
+        "pending_count": len(pending_all),
+        "history": history,
+    })
     if _q_cond is not None:
         async with _q_cond:
             _q_cond.notify_all()
@@ -1486,13 +1496,54 @@ async def queue_add(req: QueueAddRequest):
     return {"task_id": task.id}
 
 
+class QueueBatchSong(BaseModel):
+    song_id: int
+    song_name: str
+    lyrics: str = ""
+
+
+class QueueBatchAddRequest(BaseModel):
+    type: str
+    auto_propose: bool = False
+    token: str = ""
+    batch_id: str = ""
+    songs: list[QueueBatchSong]
+
+
+@app.post("/api/queue/batch")
+async def queue_add_batch(req: QueueBatchAddRequest):
+    """Enqueue every song from one batch run in a single request instead of
+    one POST per song — a large catalog scan otherwise means thousands of
+    individual round trips just to get everything queued."""
+    if req.type not in ("sync", "verify", "auto", "transcribe"):
+        raise HTTPException(400, f"Unknown task type '{req.type}'")
+    task_ids = []
+    for song in req.songs:
+        task = QueueTask(
+            id=str(uuid.uuid4())[:8],
+            type=req.type,
+            song_id=song.song_id,
+            song_name=song.song_name,
+            lyrics=song.lyrics,
+            auto_propose=req.auto_propose,
+            token=req.token,
+            batch_id=req.batch_id,
+        )
+        _tasks[task.id] = task
+        await _task_queue.put(task)
+        task_ids.append(task.id)
+    await _q_broadcast()
+    return {"task_ids": task_ids, "queued": len(task_ids)}
+
+
 @app.get("/api/queue")
 async def queue_state():
-    active   = _active_task.to_dict() if _active_task else None
-    pending  = [t.to_dict() for t in _tasks.values() if t.status == "pending"]
-    done_list = [t for t in _tasks.values() if t.status in ("done", "error", "cancelled")]
-    history  = [t.to_dict() for t in sorted(done_list, key=lambda t: t.created_at)][-20:]
-    return {"active": active, "pending": pending, "history": history}
+    active      = _active_task.to_dict() if _active_task else None
+    pending_all = [t for t in _tasks.values() if t.status == "pending"]
+    pending     = [t.to_dict() for t in pending_all[:50]]
+    done_list   = [t for t in _tasks.values() if t.status in ("done", "error", "cancelled")]
+    history     = [t.to_dict() for t in sorted(done_list, key=lambda t: t.created_at)][-20:]
+    return {"active": active, "pending": pending, "pending_count": len(pending_all), "history": history}
 
 
 @app.delete("/api/queue/history")
