@@ -592,7 +592,28 @@
   /* Karaoke */
   #karaokeView { display: none; }
   #karaokeView.visible { display: block; }
+  .karaoke-view-toggle { display: flex; gap: 5px; padding: 0 20px 10px; }
   .karaoke-lines { display: flex; flex-direction: column; gap: 5px; }
+  .karaoke-lines.source-hidden { display: none; }
+  #karaokeSourceText {
+    display: none;
+    width: 100%;
+    margin: 0 0 10px;
+    padding: 12px 14px;
+    box-sizing: border-box;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    color: #c4b5fd;
+    font-size: .9rem;
+    font-family: inherit;
+    line-height: 1.75;
+    resize: vertical;
+    outline: none;
+    min-height: 180px;
+  }
+  #karaokeView.source-mode #karaokeSourceText { display: block; }
+  #karaokeView.source-mode .karaoke-lines { display: none; }
   .kl {
     font-size: 1.05rem;
     line-height: 1.6;
@@ -715,6 +736,7 @@
   }
   .lyr-btn:hover { color: var(--text); border-color: var(--accent2); background: rgba(124,58,237,.1); }
   .lyr-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .lyr-btn.active { color: var(--accent2); border-color: var(--accent2); background: rgba(124,58,237,.1); }
   #geniusUrlInput {
     display: none;
     flex: 1;
@@ -1093,6 +1115,109 @@
     color: var(--muted);
   }
 
+  /* ── Batch panel ── */
+  #batchPanel {
+    position: fixed;
+    top: 53px; right: 0;
+    width: 320px;
+    max-width: calc(100vw - 20px);
+    max-height: calc(100vh - 63px);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-right: none;
+    border-radius: 12px 0 0 12px;
+    box-shadow: -10px 4px 36px rgba(0,0,0,.6);
+    z-index: 300;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #batchPanel.visible { display: flex; }
+  #batchContent {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-size: .83rem;
+  }
+  .batch-stat-row { display: flex; justify-content: space-between; color: var(--muted); font-size: .78rem; }
+  .batch-stat-row b { color: var(--text); }
+  .batch-stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px 14px;
+    padding: 9px 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+  }
+  .batch-stat-grid .batch-stat-row { font-size: .74rem; }
+  .batch-warn { color: #f59e0b; font-size: .78rem; line-height: 1.5; }
+  .batch-diag { color: var(--muted); font-size: .7rem; font-family: monospace; line-height: 1.5; }
+  .batch-current {
+    padding: 8px 10px;
+    background: var(--surface2);
+    border: 1px solid var(--accent);
+    border-radius: 9px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .batch-current-name { font-size: .8rem; font-weight: 700; }
+  .batch-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 260px;
+    overflow-y: auto;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+  }
+  .batch-list-title {
+    font-size: .63rem;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0 2px 2px;
+  }
+  .batch-list-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: .76rem;
+    padding: 3px 4px;
+    border-radius: 5px;
+  }
+  .batch-list-row.fail { color: var(--danger); }
+  .batch-list-icon { width: 13px; text-align: center; flex-shrink: 0; }
+  .batch-list-name {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .batch-list-dur { color: var(--muted); font-size: .66rem; font-family: monospace; flex-shrink: 0; }
+  .batch-list-empty { color: var(--muted); font-size: .74rem; padding: 6px 2px; }
+  .batch-btn {
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--accent2);
+    background: rgba(124,58,237,.15);
+    color: var(--text);
+    font-size: .82rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .batch-btn:hover { background: rgba(124,58,237,.28); }
+  .batch-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .batch-btn.danger { border-color: var(--danger); background: rgba(239,68,68,.12); }
+  .batch-btn.danger:hover { background: rgba(239,68,68,.22); }
+
   /* Queue badge on header button */
   .queue-badge {
     display: inline-flex;
@@ -1230,6 +1355,13 @@
     <span id="queueBadge" class="queue-badge" style="display:none">0</span>
   </button>
 
+  <button id="batchBtn" class="hbtn" title="Batch auto-sync songs with missing synced lyrics">
+    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <polygon points="5 3 19 12 5 21 5 3"/>
+      <line x1="19" y1="3" x2="19" y2="21"/>
+    </svg>
+  </button>
+
   <button id="settingsBtn" class="hbtn" title="Settings">
     <svg width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
       <circle cx="12" cy="12" r="3"/>
@@ -1256,6 +1388,15 @@
   <div id="queueContent">
     <div class="qp-empty">No tasks yet — hit Sync, Verify, or ⚡ Auto on a song.</div>
   </div>
+</div>
+
+<!-- ── Batch panel ── -->
+<div id="batchPanel">
+  <div class="qp-header">
+    <span class="qp-title">Batch Auto-Sync</span>
+    <button class="qp-hbtn" id="closeBatchBtn" style="font-size:1rem;padding:1px 8px">×</button>
+  </div>
+  <div id="batchContent"></div>
 </div>
 
 <div id="settingsPanel">
@@ -1401,11 +1542,16 @@
 
           <div class="lyrics-body">
             <div id="karaokeView">
+              <div class="karaoke-view-toggle">
+                <button id="karaokeInteractiveBtn" class="lyr-btn active" type="button">Interactive</button>
+                <button id="karaokeSourceBtn" class="lyr-btn" type="button" title="View the synced lyrics as raw LRC text">Source</button>
+              </div>
               <div class="karaoke-lines" id="karaokeLines">
                 <span style="color:var(--muted);font-size:.88rem">
                   Hit "Sync" or "⚡ Auto" to generate timestamped lyrics.
                 </span>
               </div>
+              <textarea id="karaokeSourceText" spellcheck="false" readonly placeholder="No synced lyrics yet."></textarea>
             </div>
 
             <div id="plainLyricsView">
@@ -1574,6 +1720,9 @@ const progMsg          = document.getElementById('progMsg');
 const progPct          = document.getElementById('progPct');
 const progFill         = document.getElementById('progFill');
 const karaokeView      = document.getElementById('karaokeView');
+const karaokeSourceText     = document.getElementById('karaokeSourceText');
+const karaokeInteractiveBtn = document.getElementById('karaokeInteractiveBtn');
+const karaokeSourceBtn      = document.getElementById('karaokeSourceBtn');
 const karaokeLines     = document.getElementById('karaokeLines');
 const plainLyricsView  = document.getElementById('plainLyricsView');
 const plainLyricsText  = document.getElementById('plainLyricsText');
@@ -1633,6 +1782,10 @@ const localFileInput     = document.getElementById('localFileInput');
 const queueContent       = document.getElementById('queueContent');
 const closeQueueBtn      = document.getElementById('closeQueueBtn');
 const clearDoneBtn       = document.getElementById('clearDoneBtn');
+const batchBtn           = document.getElementById('batchBtn');
+const batchPanel         = document.getElementById('batchPanel');
+const batchContent       = document.getElementById('batchContent');
+const closeBatchBtn      = document.getElementById('closeBatchBtn');
 
 // ── Sidebar collapse ──────────────────────────────────────────────────────
 // ── Rewind increment (C key) ─────────────────────────────────────────────
@@ -1824,6 +1977,7 @@ async function loadSongData(song) {
   setSyncStatus('');
   syncBtn.disabled = false; autoWhisperBtn.disabled = false; transcribeBtn.disabled = false;
   setKaraokeDefault();
+  setKaraokeViewMode('interactive');
   autoFollow = true; resumeFollowBtn.classList.remove('visible');
   proposeBtn.classList.remove('visible'); copyLrcBtn.classList.remove('visible');
   verifyPanel.classList.remove('visible');
@@ -2075,13 +2229,27 @@ function renderKaraoke(lines) {
      </div>`
   ).join('');
   updateOffsetVisibility();
+  refreshKaraokeSource();
 }
 function setKaraokeDefault() {
   karaokeLines.innerHTML = '<span style="color:var(--muted);font-size:.88rem">Hit "Sync" or "⚡ Auto" to generate timestamped lyrics.</span>';
   offsetTotal = 0;
   updateOffsetDisplay();
   updateOffsetVisibility();
+  refreshKaraokeSource();
 }
+// ── Karaoke source (raw LRC text) view ─────────────────────────────────────
+function refreshKaraokeSource() {
+  karaokeSourceText.value = syncedLines.length ? buildLrc() : '';
+}
+function setKaraokeViewMode(mode) {
+  karaokeView.classList.toggle('source-mode', mode === 'source');
+  karaokeInteractiveBtn.classList.toggle('active', mode !== 'source');
+  karaokeSourceBtn.classList.toggle('active', mode === 'source');
+  if (mode === 'source') refreshKaraokeSource();
+}
+karaokeInteractiveBtn.addEventListener('click', () => setKaraokeViewMode('interactive'));
+karaokeSourceBtn.addEventListener('click', () => setKaraokeViewMode('source'));
 function fmtTime(s) {
   const neg = s < 0;
   s = Math.abs(s);
@@ -2151,6 +2319,7 @@ function nudgeOffset(delta) {
   offsetTotal = Math.round((offsetTotal + delta) * 10) / 10;
   updateOffsetDisplay();
   refreshTimeChips();
+  refreshKaraokeSource();
   const idx = computeActiveIdx();
   activeLineIdx = idx;
   if (pinnedIdx < 0) applyHighlight(idx, true, false);
@@ -2231,6 +2400,7 @@ function editTime(chip, idx) {
     newChip.title = 'Click to adjust timing';
     newChip.textContent = fmtTime(syncedLines[idx].start);
     input.replaceWith(newChip);
+    refreshKaraokeSource();
   };
   input.addEventListener('blur', confirm);
   input.addEventListener('keydown', (e) => {
@@ -2587,6 +2757,7 @@ _qEvt.onmessage = (e) => {
     _queueState = state;
     renderQueue(state);
     applyCompletedTasks(state);
+    updateBatchFromQueueState(state);
   } catch {}
 };
 _qEvt.onerror = () => {};   // reconnects automatically
@@ -2660,7 +2831,13 @@ function renderTask(task, isActive) {
     bodyHtml = `<div class="tc-error-msg">✗ ${esc(task.error || 'Failed')}</div>`;
   } else if (task.status === 'done') {
     const doneMsg = task.progress?.msg ?? 'Done';
-    bodyHtml = `<div class="tc-msg" style="color:var(--green)">✓ ${esc(doneMsg)}</div>`;
+    let proposeHtml = '';
+    if (task.result?.proposed === true) {
+      proposeHtml = `<div class="tc-msg" style="color:var(--green)">✓ Proposal submitted</div>`;
+    } else if (task.result?.proposed === false) {
+      proposeHtml = `<div class="tc-error-msg">✗ Propose failed: ${esc(task.result.propose_error || '')}</div>`;
+    }
+    bodyHtml = `<div class="tc-msg" style="color:var(--green)">✓ ${esc(doneMsg)}</div>${proposeHtml}`;
   } else if (task.status === 'cancelled') {
     bodyHtml = `<div class="tc-msg">Cancelled</div>`;
   } else {
@@ -2766,6 +2943,245 @@ function applyCompletedTasks(state) {
       setSyncStatus('Auto: ' + (task.error ?? 'too many absent lines'), 'error');
     }
   }
+}
+
+// ── Batch auto-sync (all songs with lyrics but no synced lyrics) ───────────
+let batchState          = 'idle';   // idle | loading | error | ready | running | done
+let batchError          = '';
+let batchSongs          = [];       // [{id, name}] matching the filter
+let batchQueuedIds      = new Set();
+let batchResults        = {};       // song_id -> { status, proposed }
+let batchProposedCount  = 0;
+let batchFailedCount    = 0;
+let batchStopRequested  = false;
+let batchStartTime      = 0;        // Date.now() when the run started
+let batchDoneList       = [];       // [{id, name, ok, duration, detail}], most recent last
+let batchDurations      = [];       // completed-song durations (seconds) — for the average/ETA
+let batchDiag           = null;     // {align_model, verify_model, device} snapshot for this run
+let batchTickTimer      = null;     // ticks the live elapsed/ETA clock while running
+
+function fmtDuration(s) {
+  s = Math.max(0, Math.round(s));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
+
+batchBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const open = batchPanel.classList.toggle('visible');
+  batchBtn.classList.toggle('active', open);
+  if (open && batchState === 'idle') loadBatchCandidates();
+});
+closeBatchBtn.addEventListener('click', () => {
+  batchPanel.classList.remove('visible');
+  batchBtn.classList.remove('active');
+});
+document.addEventListener('click', (e) => {
+  if (batchPanel.classList.contains('visible') &&
+      !batchPanel.contains(e.target) && e.target !== batchBtn) {
+    batchPanel.classList.remove('visible');
+    batchBtn.classList.remove('active');
+  }
+});
+
+async function loadBatchCandidates() {
+  batchState = 'loading';
+  renderBatch();
+  try {
+    const data = await api('/api/songs/all');
+    const songs = data.songs || [];
+    batchSongs = songs
+      .filter(s => s.lyrics && !s.synced_lyrics && s.path)
+      .map(s => ({ id: s.id, name: s.track_titles?.[0] ?? s.name ?? `#${s.id}` }));
+    batchState = 'ready';
+  } catch (e) {
+    batchState = 'error';
+    batchError = e.message ?? String(e);
+  }
+  renderBatch();
+}
+
+function countBatchRemaining() {
+  let n = 0;
+  for (const id of batchQueuedIds) if (!batchResults[id]) n++;
+  return n;
+}
+
+function renderBatch() {
+  const token = localStorage.getItem('jw_token') || '';
+  if (batchState === 'loading') {
+    batchContent.innerHTML = `<div class="qp-empty">Scanning catalog for songs missing synced lyrics…</div>`;
+    return;
+  }
+  if (batchState === 'error') {
+    batchContent.innerHTML = `<div class="tc-error-msg">Failed to load songs: ${esc(batchError)}</div>`;
+    return;
+  }
+  if (batchState === 'ready') {
+    batchContent.innerHTML = `
+      <div>Found <b>${batchSongs.length}</b> song${batchSongs.length === 1 ? '' : 's'} with lyrics but no synced lyrics.</div>
+      ${!token ? `<div class="batch-warn">Save an API token in Settings first — each sync submits an editor proposal using it.</div>` : ''}
+      <div style="color:var(--muted);font-size:.75rem;line-height:1.5;">
+        Runs one song at a time: fetch → verify against audio → Whisper sync → submit as an editor proposal (reviewed, not a live overwrite). Watch progress in the Task Queue.
+      </div>
+      <button class="batch-btn" id="batchStartBtn" ${(!token || !batchSongs.length) ? 'disabled' : ''}>
+        Start batch (${batchSongs.length})
+      </button>`;
+    document.getElementById('batchStartBtn')?.addEventListener('click', startBatch);
+    return;
+  }
+  if (batchState === 'running' || batchState === 'done') {
+    const total     = batchQueuedIds.size;
+    const doneCount = total - countBatchRemaining();
+    const elapsedS  = (Date.now() - batchStartTime) / 1000;
+    const avgS      = batchDurations.length
+      ? batchDurations.reduce((a, b) => a + b, 0) / batchDurations.length : 0;
+    const remaining = countBatchRemaining();
+    const etaS      = avgS ? avgS * remaining : 0;
+    const perHour   = elapsedS > 0 ? (doneCount / (elapsedS / 3600)) : 0;
+
+    const diagLine = batchDiag
+      ? `<div class="batch-diag">Align: ${esc(batchDiag.align_model)} · Verify: ${esc(batchDiag.verify_model)} · Device: ${esc((batchDiag.device || '?').toUpperCase())}</div>`
+      : '';
+
+    let currentHtml = '';
+    const active = _queueState.active;
+    if (batchState === 'running' && active && batchQueuedIds.has(active.song_id) && !batchResults[active.song_id]) {
+      const pct = active.progress?.pct ?? 0;
+      const indeterminate = active.progress?.stage === 'loading';
+      currentHtml = `
+        <div class="batch-current">
+          <div class="batch-current-name">▶ ${esc(active.song_name)}</div>
+          <div class="tc-msg">${esc(active.progress?.msg ?? 'Working…')}</div>
+          <div class="tc-prog-track">
+            <div class="tc-prog-fill${indeterminate ? ' indeterminate' : ''}" style="width:${indeterminate ? 35 : pct}%"></div>
+          </div>
+        </div>`;
+    }
+
+    const listRows = [...batchDoneList].reverse().map(item => `
+      <div class="batch-list-row ${item.ok ? '' : 'fail'}" title="${esc(item.detail || '')}">
+        <span class="batch-list-icon">${item.ok ? '✓' : '✗'}</span>
+        <span class="batch-list-name">${esc(item.name)}</span>
+        <span class="batch-list-dur">${fmtDuration(item.duration)}</span>
+      </div>`).join('');
+
+    batchContent.innerHTML = `
+      ${diagLine}
+      <div class="batch-stat-grid">
+        <div class="batch-stat-row"><span>Queued</span><b>${total}</b></div>
+        <div class="batch-stat-row"><span>Remaining</span><b>${remaining}</b></div>
+        <div class="batch-stat-row"><span>Proposed</span><b>${batchProposedCount}</b></div>
+        <div class="batch-stat-row"><span>Failed</span><b>${batchFailedCount}</b></div>
+        <div class="batch-stat-row"><span>Elapsed</span><b>${fmtDuration(elapsedS)}</b></div>
+        <div class="batch-stat-row"><span>Avg / song</span><b>${avgS ? fmtDuration(avgS) : '—'}</b></div>
+        <div class="batch-stat-row"><span>ETA</span><b>${batchState === 'running' && etaS ? fmtDuration(etaS) : '—'}</b></div>
+        <div class="batch-stat-row"><span>Pace</span><b>${perHour ? perHour.toFixed(1) + '/hr' : '—'}</b></div>
+      </div>
+      ${currentHtml}
+      ${batchState === 'running'
+        ? `<button class="batch-btn danger" id="batchStopBtn">Stop batch</button>`
+        : `<div>Batch finished — ${batchProposedCount} proposed, ${batchFailedCount} failed.</div>
+           <button class="batch-btn" id="batchRescanBtn">Rescan</button>`}
+      <div class="batch-list-title">Songs done (${batchDoneList.length})</div>
+      <div class="batch-list">${listRows || '<div class="batch-list-empty">Nothing finished yet…</div>'}</div>`;
+
+    document.getElementById('batchStopBtn')?.addEventListener('click', stopBatch);
+    document.getElementById('batchRescanBtn')?.addEventListener('click', loadBatchCandidates);
+  }
+}
+
+async function startBatch() {
+  const token = localStorage.getItem('jw_token') || '';
+  if (!token || !batchSongs.length) return;
+  batchQueuedIds     = new Set(batchSongs.map(s => s.id));
+  batchResults       = {};
+  batchProposedCount = 0;
+  batchFailedCount   = 0;
+  batchStopRequested = false;
+  batchStartTime     = Date.now();
+  batchDoneList      = [];
+  batchDurations     = [];
+  batchState = 'running';
+
+  try { batchDiag = await api('/api/model'); } catch { batchDiag = null; }
+
+  renderBatch();
+  queuePanel.classList.add('visible');
+  queueBtn.classList.add('active');
+
+  clearInterval(batchTickTimer);
+  batchTickTimer = setInterval(() => {
+    if (batchState !== 'running') { clearInterval(batchTickTimer); return; }
+    if (batchPanel.classList.contains('visible')) renderBatch();
+  }, 1000);
+
+  for (const song of batchSongs) {
+    if (batchStopRequested) break;
+    try {
+      await api('/api/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'auto',
+          song_id: song.id,
+          song_name: song.name,
+          lyrics: '',
+          local_path: '',
+          auto_propose: true,
+          token,
+        }),
+      });
+    } catch {
+      batchQueuedIds.delete(song.id);   // couldn't enqueue — don't wait on it
+    }
+  }
+  renderBatch();
+}
+
+function stopBatch() {
+  batchStopRequested = true;
+  const toCancel = [];
+  if (_queueState.active && batchQueuedIds.has(_queueState.active.song_id) && !batchResults[_queueState.active.song_id]) {
+    toCancel.push(_queueState.active.id);
+  }
+  (_queueState.pending ?? []).forEach(t => { if (batchQueuedIds.has(t.song_id)) toCancel.push(t.id); });
+  toCancel.forEach(cancelTask);
+  batchState = 'done';
+  clearInterval(batchTickTimer);
+  renderBatch();
+}
+
+function updateBatchFromQueueState(state) {
+  if (batchState !== 'running') return;
+  const candidates = [...(state.history ?? [])];
+  if (state.active && (state.active.status === 'done' || state.active.status === 'error')) candidates.push(state.active);
+  for (const task of candidates) {
+    if (!batchQueuedIds.has(task.song_id) || batchResults[task.song_id]) continue;
+    if (task.status === 'done' || task.status === 'error') {
+      const proposed = task.result?.proposed === true;
+      batchResults[task.song_id] = { status: task.status, proposed };
+      if (proposed) batchProposedCount++; else batchFailedCount++;
+
+      const duration = (task.started_at && task.finished_at)
+        ? Math.max(0, task.finished_at - task.started_at) : 0;
+      if (duration) batchDurations.push(duration);
+
+      let detail = '';
+      if (!proposed) {
+        detail = task.status === 'error' ? (task.error || 'Sync failed')
+          : (task.result?.propose_error || 'Propose failed');
+      }
+      batchDoneList.push({ id: task.song_id, name: task.song_name, ok: proposed, duration, detail });
+    }
+  }
+  if (countBatchRemaining() === 0) {
+    batchState = 'done';
+    clearInterval(batchTickTimer);
+  }
+  if (batchPanel.classList.contains('visible')) renderBatch();
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────

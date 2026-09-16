@@ -297,10 +297,14 @@ class QueueTask:
     song_name: str
     lyrics: str         # may be empty
     local_path: str = ""  # non-empty → use this file instead of fetching from API
+    auto_propose: bool = False  # submit an editor proposal automatically once synced
+    token: str = ""            # auth token used for auto_propose (never exposed via to_dict)
     status: str = "pending"   # pending|running|done|error|cancelled
     progress: dict = dc_field(default_factory=dict)
     error: str = ""
     created_at: float = dc_field(default_factory=time.time)
+    started_at: float = 0.0    # set when the task starts running
+    finished_at: float = 0.0   # set when the task leaves running/cancelling
     cancel_requested: bool = False
     result: dict | None = None
 
@@ -314,6 +318,8 @@ class QueueTask:
             "progress": self.progress,
             "error": self.error,
             "created_at": self.created_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
         }
         if self.result and self.status in ("done", "error"):
             d["result"] = self.result
@@ -680,6 +686,7 @@ async def _queue_processor() -> None:
 
         _active_task = task
         task.status  = "running"
+        task.started_at = time.time()
         await _q_broadcast()
 
         try:
@@ -691,6 +698,16 @@ async def _queue_processor() -> None:
                 await _run_auto_task(task)
             elif task.type == "transcribe":
                 await _run_transcribe_task(task)
+
+            if (task.auto_propose and task.type in ("sync", "auto")
+                    and task.result and task.result.get("lines")):
+                try:
+                    await _propose_lyrics(task.song_id, task.result["lines"], task.token)
+                    task.result["proposed"] = True
+                except Exception as exc:
+                    task.result["proposed"] = False
+                    task.result["propose_error"] = exc.detail if isinstance(exc, HTTPException) else str(exc)
+
             if task.status in ("running", "cancelling"):   # runner didn't set error/cancelled
                 task.status = "done"
         except asyncio.CancelledError:
@@ -700,13 +717,14 @@ async def _queue_processor() -> None:
             task.error  = str(exc)
             print(f"[queue] Task {task.id} failed: {exc}")
         finally:
+            task.finished_at = time.time()
             _active_task = None
             _task_queue.task_done()
             await _q_broadcast()
-            # Prune old history (keep last 30)
+            # Prune old history (keep last 500 — batch runs can be large)
             done_list = [t for t in _tasks.values() if t.status in ("done", "error", "cancelled")]
-            if len(done_list) > 30:
-                for old in sorted(done_list, key=lambda t: t.created_at)[:-30]:
+            if len(done_list) > 500:
+                for old in sorted(done_list, key=lambda t: t.created_at)[:-500]:
                     _tasks.pop(old.id, None)
 
 
@@ -1044,14 +1062,13 @@ class ProposeRequest(BaseModel):
     plain_lyrics: str = ""   # optional; if set, included alongside synced_lyrics
 
 
-@app.post("/api/propose")
-async def propose_lyrics(req: ProposeRequest):
-    if not req.token:
+async def _propose_lyrics(song_id: int, lines: list[dict], token: str, plain_lyrics: str = "") -> dict:
+    if not token:
         raise HTTPException(401, "No auth token provided.")
 
     # Build LRC string from lines
     lrc_parts = []
-    for line in req.lines:
+    for line in lines:
         start = line.get("start", 0)
         m = int(start // 60)
         s = start % 60
@@ -1059,7 +1076,7 @@ async def propose_lyrics(req: ProposeRequest):
     lrc = "\n".join(lrc_parts)
 
     # Fetch song name for the proposal title
-    song = await jw_get(f"/songs/{req.song_id}/")
+    song = await jw_get(f"/songs/{song_id}/")
 
     # follow_redirects=True so any 301/302 on the URL is followed, but also
     # preserve the method (httpx sends a new POST on 307/308 redirects).
@@ -1067,17 +1084,17 @@ async def propose_lyrics(req: ProposeRequest):
         r = await client.post(
             BASE + "/accounts/editor/proposals/",
             headers={
-                "Authorization": f"Token {req.token}",
+                "Authorization": f"Token {token}",
                 "Content-Type": "application/json",
             },
             json={
                 "change_type": "update",
-                "song": req.song_id,
-                "title": song.get("name", str(req.song_id)),
+                "song": song_id,
+                "title": song.get("name", str(song_id)),
                 "editor_notes": "Synced lyrics generated with WRLD Sync",
                 "proposed_data": {
                     "synced_lyrics": lrc,
-                    **({"lyrics": req.plain_lyrics} if req.plain_lyrics.strip() else {}),
+                    **({"lyrics": plain_lyrics} if plain_lyrics.strip() else {}),
                 },
             },
         )
@@ -1089,6 +1106,11 @@ async def propose_lyrics(req: ProposeRequest):
         if not r.is_success:
             raise HTTPException(r.status_code, f"API error {r.status_code}: {body}")
         return r.json()
+
+
+@app.post("/api/propose")
+async def propose_lyrics(req: ProposeRequest):
+    return await _propose_lyrics(req.song_id, req.lines, req.token, req.plain_lyrics)
 
 
 GENIUS_HEADERS = {
@@ -1352,6 +1374,8 @@ class QueueAddRequest(BaseModel):
     song_name: str
     lyrics: str = ""
     local_path: str = ""  # set when syncing a local file instead of an API song
+    auto_propose: bool = False  # submit an editor proposal automatically once synced
+    token: str = ""             # auth token for auto_propose
 
 
 @app.post("/api/queue")
@@ -1365,6 +1389,8 @@ async def queue_add(req: QueueAddRequest):
         song_name=req.song_name,
         lyrics=req.lyrics,
         local_path=req.local_path,
+        auto_propose=req.auto_propose,
+        token=req.token,
     )
     _tasks[task.id] = task
     await _task_queue.put(task)
