@@ -367,6 +367,7 @@ class QueueTask:
     local_path: str = ""  # non-empty → use this file instead of fetching from API
     auto_propose: bool = False  # submit an editor proposal automatically once synced
     token: str = ""            # auth token used for auto_propose (never exposed via to_dict)
+    batch_id: str = ""         # groups tasks from one batch run, for bulk-cancel
     status: str = "pending"   # pending|running|done|error|cancelled
     progress: dict = dc_field(default_factory=dict)
     error: str = ""
@@ -1461,6 +1462,7 @@ class QueueAddRequest(BaseModel):
     local_path: str = ""  # set when syncing a local file instead of an API song
     auto_propose: bool = False  # submit an editor proposal automatically once synced
     token: str = ""             # auth token for auto_propose
+    batch_id: str = ""          # groups tasks from one batch run, for bulk-cancel
 
 
 @app.post("/api/queue")
@@ -1476,6 +1478,7 @@ async def queue_add(req: QueueAddRequest):
         local_path=req.local_path,
         auto_propose=req.auto_propose,
         token=req.token,
+        batch_id=req.batch_id,
     )
     _tasks[task.id] = task
     await _task_queue.put(task)
@@ -1516,6 +1519,26 @@ async def queue_cancel(task_id: str):
         task.status = "cancelling"
     await _q_broadcast()
     return {"cancelled": True}
+
+
+@app.post("/api/queue/batch/{batch_id}/cancel")
+async def queue_cancel_batch(batch_id: str):
+    """Cancel every pending/running task from one batch run, read straight from
+    the server's own task table rather than a client-side snapshot — avoids the
+    race where tasks enqueued a moment before "Stop" was clicked survive it."""
+    cancelled = 0
+    for task in _tasks.values():
+        if task.batch_id != batch_id or task.status not in ("pending", "running", "cancelling"):
+            continue
+        task.cancel_requested = True
+        if task.status == "pending":
+            task.status = "cancelled"
+        elif task.status == "running":
+            task.progress = {**task.progress, "msg": "Cancelling…"}
+            task.status = "cancelling"
+        cancelled += 1
+    await _q_broadcast()
+    return {"cancelled": cancelled}
 
 
 @app.get("/api/queue/stream")

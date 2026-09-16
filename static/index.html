@@ -2954,6 +2954,7 @@ let batchResults        = {};       // song_id -> { status, proposed }
 let batchProposedCount  = 0;
 let batchFailedCount    = 0;
 let batchStopRequested  = false;
+let batchRunId          = '';       // groups this run's tasks server-side, for a reliable Stop
 let batchStartTime      = 0;        // Date.now() when the run started
 let batchDoneList       = [];       // [{id, name, ok, duration, detail}], most recent last
 let batchDurations      = [];       // completed-song durations (seconds) — for the average/ETA
@@ -3093,6 +3094,11 @@ function renderBatch() {
   }
 }
 
+async function cancelBatchRun(runId) {
+  if (!runId) return;
+  try { await fetch(`/api/queue/batch/${runId}/cancel`, { method: 'POST' }); } catch {}
+}
+
 async function startBatch() {
   const token = localStorage.getItem('jw_token') || '';
   if (!token || !batchSongs.length) return;
@@ -3104,6 +3110,7 @@ async function startBatch() {
   batchStartTime     = Date.now();
   batchDoneList      = [];
   batchDurations     = [];
+  batchRunId         = (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   batchState = 'running';
 
   try { batchDiag = await api('/api/model'); } catch { batchDiag = null; }
@@ -3132,25 +3139,26 @@ async function startBatch() {
           local_path: '',
           auto_propose: true,
           token,
+          batch_id: batchRunId,
         }),
       });
     } catch {
       batchQueuedIds.delete(song.id);   // couldn't enqueue — don't wait on it
     }
   }
+  // If Stop was clicked mid-loop, a song already in flight when the flag
+  // flipped can land in the server's queue just after the first cancel call
+  // below fired — sweep the batch again now that the loop has fully stopped
+  // adding new songs, so nothing from a stopped run is left runnable.
+  if (batchStopRequested) await cancelBatchRun(batchRunId);
   renderBatch();
 }
 
 function stopBatch() {
   batchStopRequested = true;
-  const toCancel = [];
-  if (_queueState.active && batchQueuedIds.has(_queueState.active.song_id) && !batchResults[_queueState.active.song_id]) {
-    toCancel.push(_queueState.active.id);
-  }
-  (_queueState.pending ?? []).forEach(t => { if (batchQueuedIds.has(t.song_id)) toCancel.push(t.id); });
-  toCancel.forEach(cancelTask);
   batchState = 'done';
   clearInterval(batchTickTimer);
+  cancelBatchRun(batchRunId);
   renderBatch();
 }
 
