@@ -14,6 +14,29 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field as dc_field
 
 # ---------------------------------------------------------------------------
+# Make stdout safe for the emoji/colored status lines below, regardless of
+# how this process ends up attached to a console:
+#   - line_buffering=True: some ways of launching this (e.g. as a spawned
+#     child process without its own real console) fall back to full block
+#     buffering, where short status lines just sit in the buffer and never
+#     reach the screen until it fills up or the process exits.
+#   - errors="replace": Windows only gets Python's Unicode-safe console
+#     writer when stdout is a genuine console handle (PEP 528); otherwise it
+#     falls back to the legacy codepage (cp1252/cp437 etc.), which can't
+#     encode most emoji and RAISES UnicodeEncodeError on the first print
+#     that tries — and since that print previously happened outside any
+#     try/except in the queue processor, it silently killed the whole
+#     background task forever (no more syncing, no more console output,
+#     while the browser UI kept ticking its own client-side elapsed timer
+#     with no idea the server had stopped). Replacing unencodable
+#     characters with '?' means a print can never crash anything again.
+# ---------------------------------------------------------------------------
+try:
+    sys.stdout.reconfigure(line_buffering=True, errors="replace")
+except Exception:
+    pass
+
+# ---------------------------------------------------------------------------
 # Windows: shut down cleanly when the console window is closed
 # ---------------------------------------------------------------------------
 if sys.platform == "win32":
@@ -93,24 +116,33 @@ _TASK_ICON = {"sync": "⚡", "verify": "🔎", "auto": "🚀", "transcribe": "�
 
 
 def _log_task_event(task: "QueueTask", event: str) -> None:
-    """One friendly console line per queue task lifecycle event."""
-    icon = _TASK_ICON.get(task.type, "•")
-    name = task.song_name or f"song {task.song_id}"
-    if event == "start":
-        print(_paint(f"[queue] {icon} {task.type} \"{name}\" — starting…", _C.CYAN))
-    elif event == "done":
-        dur = (task.finished_at - task.started_at) if task.started_at and task.finished_at else 0
-        line = f"[queue] ✓ \"{name}\" done in {dur:.1f}s"
-        if task.result and "proposed" in task.result:
-            if task.result["proposed"]:
-                line += " — proposal submitted ✓"
-            else:
-                line += f" — propose failed: {task.result.get('propose_error', '')}"
-        print(_paint(line, _C.GREEN if (not task.result or task.result.get("proposed", True)) else _C.YELLOW))
-    elif event == "error":
-        print(_paint(f"[queue] ✗ \"{name}\" failed: {task.error}", _C.RED))
-    elif event == "cancelled":
-        print(_paint(f"[queue] ⊘ \"{name}\" cancelled", _C.YELLOW))
+    """One friendly console line per queue task lifecycle event. Must never
+    raise — this runs inside the queue processor's main loop, and an
+    unhandled exception here (e.g. a console encoding issue) would silently
+    kill background processing for good, not just the log line."""
+    try:
+        icon = _TASK_ICON.get(task.type, "•")
+        name = task.song_name or f"song {task.song_id}"
+        if event == "start":
+            print(_paint(f"[queue] {icon} {task.type} \"{name}\" — starting…", _C.CYAN), flush=True)
+        elif event == "done":
+            dur = (task.finished_at - task.started_at) if task.started_at and task.finished_at else 0
+            line = f"[queue] ✓ \"{name}\" done in {dur:.1f}s"
+            if task.result and "proposed" in task.result:
+                if task.result["proposed"]:
+                    line += " — proposal submitted ✓"
+                else:
+                    line += f" — propose failed: {task.result.get('propose_error', '')}"
+            print(_paint(line, _C.GREEN if (not task.result or task.result.get("proposed", True)) else _C.YELLOW), flush=True)
+        elif event == "error":
+            print(_paint(f"[queue] ✗ \"{name}\" failed: {task.error}", _C.RED), flush=True)
+        elif event == "cancelled":
+            print(_paint(f"[queue] ⊘ \"{name}\" cancelled", _C.YELLOW), flush=True)
+    except Exception as exc:
+        try:
+            print(f"[queue] (status line for \"{task.song_name}\" failed to print: {exc})", flush=True)
+        except Exception:
+            pass
 
 # ---------------------------------------------------------------------------
 # tqdm progress spy — captures stable_whisper alignment/transcription progress
@@ -853,7 +885,10 @@ def _log_startup_diagnostics() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _log_startup_diagnostics()
+    try:
+        _log_startup_diagnostics()
+    except Exception as exc:
+        print(f"[startup] Diagnostics banner failed to print: {exc}")
     global _q_cond
     _q_cond = asyncio.Condition()
     proc = asyncio.create_task(_queue_processor())
