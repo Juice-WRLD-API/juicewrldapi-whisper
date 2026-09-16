@@ -144,6 +144,56 @@ def _log_task_event(task: "QueueTask", event: str) -> None:
         except Exception:
             pass
 
+
+def _fmt_console_duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}h {m}m"
+    if m:
+        return f"{m}m {s}s"
+    return f"{s}s"
+
+
+def _log_batch_progress(batch_id: str) -> None:
+    """One-line running summary for a batch run — the same stats the
+    browser's Batch panel shows (queued/remaining/proposed/failed/elapsed/
+    avg/ETA/pace), printed to the console too. Called whenever a task
+    belonging to a batch starts or finishes. Must never raise, for the same
+    reason as _log_task_event."""
+    if not batch_id:
+        return
+    try:
+        rows = [t for t in _tasks.values() if t.batch_id == batch_id]
+        if not rows:
+            return
+        total     = len(rows)
+        done_rows = [t for t in rows if t.status in ("done", "error", "cancelled")]
+        done      = len(done_rows)
+        remaining = total - done
+        proposed  = sum(1 for t in done_rows if t.result and t.result.get("proposed") is True)
+        failed    = done - proposed
+
+        durations = [t.finished_at - t.started_at for t in done_rows if t.started_at and t.finished_at]
+        avg       = sum(durations) / len(durations) if durations else 0
+        started   = min((t.created_at for t in rows), default=time.time())
+        elapsed   = time.time() - started
+        eta       = avg * remaining if avg else 0
+        pace      = (done / (elapsed / 3600)) if elapsed > 0 and done else 0
+
+        line = (
+            f"[batch] {done}/{total} done"
+            f" (✓{proposed} ✗{failed})"
+            f" · elapsed {_fmt_console_duration(elapsed)}"
+            f" · avg {_fmt_console_duration(avg) + '/song' if avg else '—/song'}"
+            f" · ETA {_fmt_console_duration(eta) if eta else '—'}"
+            f" · pace {f'{pace:.1f}/hr' if pace else '—'}"
+        )
+        print(_paint(line, _C.MAGENTA), flush=True)
+    except Exception:
+        pass
+
 # ---------------------------------------------------------------------------
 # tqdm progress spy — captures stable_whisper alignment/transcription progress
 # ---------------------------------------------------------------------------
@@ -800,6 +850,7 @@ async def _queue_processor() -> None:
         task.started_at = time.time()
         await _q_broadcast()
         _log_task_event(task, "start")
+        _log_batch_progress(task.batch_id)
 
         try:
             if task.type == "sync":
@@ -831,6 +882,7 @@ async def _queue_processor() -> None:
             task.finished_at = time.time()
             _active_task = None
             _log_task_event(task, task.status if task.status in ("done", "error", "cancelled") else "error")
+            _log_batch_progress(task.batch_id)
             _task_queue.task_done()
             await _q_broadcast()
             # Prune old history (keep last 500 — batch runs can be large)
